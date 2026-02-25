@@ -1,0 +1,188 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InternalPlan {
+  FREE
+  PRO
+  TEAM
+}
+
+enum XPaidTier {
+  FREE
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum Tone {
+  PROFESSIONAL
+  WITTY
+  INSIGHTFUL
+}
+
+enum CtaStyle {
+  SOFT
+  DIRECT
+  NONE
+}
+
+enum UsageAction {
+  REPLY
+  LIKE
+  TWEET
+  FOLLOW
+  DISCOVERY
+}
+
+enum ModerationStatus {
+  PENDING
+  PASSED
+  BLOCKED
+}
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  name            String?
+  internalPlan    InternalPlan     @default(FREE)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  xConnection     XConnection?
+  topics          Topic[]
+  replyConfig     ReplyConfig?
+  autoTweetConfig AutoTweetConfig?
+  tweetCandidates TweetCandidate[]
+  usageEvents     UsageEvent[]
+  actionLogs      ActionLog[]
+  generatedTweets GeneratedTweet[]
+}
+
+model XConnection {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  xUserId        String
+  username       String?
+  accessTokenEnc String
+  refreshTokenEnc String?
+  tokenExpiresAt DateTime?
+  scope          String
+  xPaidTier      XPaidTier @default(FREE)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([xUserId])
+}
+
+model Topic {
+  id           String   @id @default(cuid())
+  userId       String
+  keyword      String
+  language     String   @default("en")
+  minLikes     Int      @default(0)
+  excludeWords String[]
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, keyword, language])
+  @@index([userId, active])
+}
+
+model ReplyConfig {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  tone          Tone     @default(PROFESSIONAL)
+  bioContext    String?
+  ctaStyle      CtaStyle @default(SOFT)
+  likeOnReply   Boolean  @default(true)
+  followOnReply Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AutoTweetConfig {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  topics           String[]
+  frequencyMinutes Int      @default(180)
+  windowStart      String   @default("09:00")
+  windowEnd        String   @default("18:00")
+  threadMode       Boolean  @default(false)
+  language         String   @default("en")
+  enabled          Boolean  @default(false)
+  lastRunAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TweetCandidate {
+  id                   String           @id @default(cuid())
+  userId               String
+  tweetId              String
+  authorId             String
+  authorHandle         String?
+  text                 String
+  language             String?
+  likeCount            Int              @default(0)
+  discoveredAt         DateTime         @default(now())
+  repliedAt            DateTime?
+  likedAt              DateTime?
+  followedAt           DateTime?
+  moderationStatus     ModerationStatus @default(PENDING)
+  replyText            String?
+  duplicateFingerprint String?
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tweetId])
+  @@index([userId, discoveredAt])
+  @@index([userId, repliedAt])
+}
+
+model GeneratedTweet {
+  id          String   @id @default(cuid())
+  userId      String
+  text        String
+  threadParts String[]
+  xTweetId    String?
+  sourceTopic String?
+  status      String   @default("generated")
+  postedAt    DateTime?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model UsageEvent {
+  id        String      @id @default(cuid())
+  userId    String
+  action    UsageAction
+  createdAt DateTime    @default(now())
+  meta      Json?
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, action, createdAt])
+}
+
+model ActionLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  status    String
+  message   String?
+  context   Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
