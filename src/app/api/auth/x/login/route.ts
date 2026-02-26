@@ -2,14 +2,20 @@ import { NextResponse } from "next/server";
 
 import { env } from "@/lib/env";
 import { buildXOAuthAuthorizeUrl, createOAuthState, createPkcePair } from "@/lib/x/oauth";
+import { savePendingOAuthState } from "@/lib/x/pending-oauth";
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!env.X_CLIENT_ID || !env.X_CALLBACK_URL) {
     return NextResponse.redirect(new URL("/login?x_error=missing_x_oauth_env", env.APP_URL));
   }
 
+  const appOrigin = new URL(request.url).origin;
   const state = createOAuthState("oauth_login");
   const pkce = createPkcePair();
+  await savePendingOAuthState(state, {
+    codeVerifier: pkce.verifier,
+    returnToOrigin: appOrigin
+  });
   const redirectUrl = buildXOAuthAuthorizeUrl({
     state,
     codeChallenge: pkce.challenge,

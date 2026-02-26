@@ -111,6 +111,9 @@ function formatOAuthError(code: string) {
   }
 
   if (code.startsWith("X OAuth token exchange failed")) {
+    if (code.includes("Missing valid authorization header") || code.includes("invalid_client")) {
+      return "X rejected app credentials. Use OAuth 2.0 Client ID + Client Secret from X Developer Portal (not @username), save BYOA again, and retry connect.";
+    }
     return "X token exchange failed. Verify X_CLIENT_ID, X_CLIENT_SECRET, and X_CALLBACK_URL match your X app settings.";
   }
 

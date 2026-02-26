@@ -7,6 +7,7 @@ import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { detectXPaidTier, exchangeCodeForToken, getAuthenticatedUser } from "@/lib/x/client";
 import { isLikelyXClientId, normalizeXClientId, verifyOAuthState } from "@/lib/x/oauth";
+import { consumePendingOAuthState, getOAuthDefaultOrigin } from "@/lib/x/pending-oauth";
 
 function isOAuthLoginState(state: string | null) {
   return Boolean(state && state.startsWith("oauth_login."));
@@ -19,10 +20,12 @@ function redirectWithOAuthError(appOrigin: string, state: string | null, error: 
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const appOrigin = url.origin;
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
+  const defaultAppOrigin = getOAuthDefaultOrigin();
+  const pendingState = state ? await consumePendingOAuthState(state) : null;
+  const appOrigin = pendingState?.returnToOrigin ?? defaultAppOrigin;
 
   if (error) {
     return redirectWithOAuthError(appOrigin, state, error);
@@ -33,10 +36,12 @@ export async function GET(request: Request) {
 
   const cookieStore = await cookies();
   const storedState = cookieStore.get("x_oauth_state")?.value;
-  const codeVerifier = cookieStore.get("x_oauth_verifier")?.value;
+  const cookieCodeVerifier = cookieStore.get("x_oauth_verifier")?.value;
+  const codeVerifier = cookieCodeVerifier ?? pendingState?.codeVerifier ?? null;
   const stateHint = state ?? storedState ?? null;
+  const cookieStateMatches = Boolean(storedState && storedState === state);
 
-  if (!storedState || !codeVerifier || storedState !== state) {
+  if ((!cookieStateMatches && !pendingState) || !codeVerifier) {
     return redirectWithOAuthError(appOrigin, stateHint, "state_mismatch");
   }
 

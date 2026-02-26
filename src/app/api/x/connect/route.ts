@@ -12,6 +12,7 @@ import {
   isLikelyXClientId,
   normalizeXClientId
 } from "@/lib/x/oauth";
+import { savePendingOAuthState } from "@/lib/x/pending-oauth";
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -36,6 +37,10 @@ export async function GET(request: Request) {
 
   const state = createOAuthState(user.id);
   const pkce = createPkcePair();
+  await savePendingOAuthState(state, {
+    codeVerifier: pkce.verifier,
+    returnToOrigin: appOrigin
+  });
   const redirectUrl = buildXOAuthAuthorizeUrl({
     state,
     codeChallenge: pkce.challenge,

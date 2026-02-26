@@ -13,6 +13,18 @@ export type XOAuthAppCredentials = {
   callbackUrl: string;
 };
 
+type TokenRequestMode =
+  | "public_pkce"
+  | "confidential_client_id_basic"
+  | "confidential_api_key_basic"
+  | "confidential_api_key_basic_with_client_id";
+
+type TokenAttemptResult = {
+  ok: boolean;
+  status: number;
+  body: string;
+};
+
 async function readJsonSafe<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) {
@@ -38,6 +50,96 @@ async function xFetch(path: string, options: XFetchOptions) {
   return response;
 }
 
+function readXClientIdHints(clientId: string) {
+  try {
+    const decoded = Buffer.from(clientId, "base64").toString("utf8");
+    const [apiKey, version, type] = decoded.split(":");
+    if (apiKey && version && type) {
+      return {
+        decoded,
+        apiKey,
+        type
+      };
+    }
+  } catch {
+    // Non-base64 or unexpected shape: keep using raw client ID.
+  }
+  return null;
+}
+
+function buildBasicAuthHeader(username: string, secret: string) {
+  const raw = `${username}:${secret}`;
+  return `Basic ${Buffer.from(raw).toString("base64")}`;
+}
+
+async function requestOAuthToken(
+  baseParams: URLSearchParams,
+  oauth: XOAuthAppCredentials,
+  mode: TokenRequestMode
+): Promise<TokenAttemptResult> {
+  const params = new URLSearchParams(baseParams);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded"
+  };
+
+  if (mode === "public_pkce") {
+    params.set("client_id", oauth.clientId);
+  } else {
+    if (!oauth.clientSecret) {
+      return {
+        ok: false,
+        status: 0,
+        body: "Client secret required for confidential token exchange"
+      };
+    }
+
+    if (mode === "confidential_client_id_basic") {
+      headers.Authorization = buildBasicAuthHeader(oauth.clientId, oauth.clientSecret);
+      params.set("client_id", oauth.clientId);
+    } else {
+      const hints = readXClientIdHints(oauth.clientId);
+      const username = hints?.apiKey;
+      if (!username) {
+        return {
+          ok: false,
+          status: 0,
+          body: "Unable to decode X API key from client ID"
+        };
+      }
+      headers.Authorization = buildBasicAuthHeader(username, oauth.clientSecret);
+      if (mode === "confidential_api_key_basic_with_client_id") {
+        params.set("client_id", oauth.clientId);
+      }
+    }
+  }
+
+  const response = await fetch(env.X_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers,
+    body: params.toString()
+  });
+  const body = await response.text();
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body
+  };
+}
+
+function buildTokenAttemptModes(oauth: XOAuthAppCredentials): TokenRequestMode[] {
+  if (!oauth.clientSecret) {
+    return ["public_pkce"];
+  }
+
+  return [
+    "confidential_client_id_basic",
+    "confidential_api_key_basic",
+    "confidential_api_key_basic_with_client_id",
+    "public_pkce"
+  ];
+}
+
 export async function exchangeCodeForToken(
   input: { code: string; codeVerifier: string },
   oauth: XOAuthAppCredentials
@@ -50,31 +152,19 @@ export async function exchangeCodeForToken(
     grant_type: "authorization_code",
     code: input.code,
     redirect_uri: oauth.callbackUrl,
-    code_verifier: input.codeVerifier,
-    client_id: oauth.clientId
+    code_verifier: input.codeVerifier
   });
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded"
-  };
-
-  if (oauth.clientSecret) {
-    const raw = `${oauth.clientId}:${oauth.clientSecret}`;
-    headers.Authorization = `Basic ${Buffer.from(raw).toString("base64")}`;
+  const errors: string[] = [];
+  for (const mode of buildTokenAttemptModes(oauth)) {
+    const attempt = await requestOAuthToken(params, oauth, mode);
+    if (attempt.ok) {
+      return JSON.parse(attempt.body) as XTokenResponse;
+    }
+    errors.push(`[${mode}] (${attempt.status}): ${attempt.body}`);
   }
 
-  const response = await fetch(env.X_OAUTH_TOKEN_URL, {
-    method: "POST",
-    headers,
-    body: params.toString()
-  });
-
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`X OAuth token exchange failed (${response.status}): ${details}`);
-  }
-
-  return readJsonSafe<XTokenResponse>(response);
+  throw new Error(`X OAuth token exchange failed ${errors.join(" | ")}`);
 }
 
 export async function refreshAccessToken(refreshToken: string, oauth: XOAuthAppCredentials) {
@@ -84,31 +174,19 @@ export async function refreshAccessToken(refreshToken: string, oauth: XOAuthAppC
 
   const params = new URLSearchParams({
     grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: oauth.clientId
+    refresh_token: refreshToken
   });
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded"
-  };
-
-  if (oauth.clientSecret) {
-    const raw = `${oauth.clientId}:${oauth.clientSecret}`;
-    headers.Authorization = `Basic ${Buffer.from(raw).toString("base64")}`;
+  const errors: string[] = [];
+  for (const mode of buildTokenAttemptModes(oauth)) {
+    const attempt = await requestOAuthToken(params, oauth, mode);
+    if (attempt.ok) {
+      return JSON.parse(attempt.body) as XTokenResponse;
+    }
+    errors.push(`[${mode}] (${attempt.status}): ${attempt.body}`);
   }
 
-  const response = await fetch(env.X_OAUTH_TOKEN_URL, {
-    method: "POST",
-    headers,
-    body: params.toString()
-  });
-
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`X token refresh failed (${response.status}): ${details}`);
-  }
-
-  return readJsonSafe<XTokenResponse>(response);
+  throw new Error(`X token refresh failed ${errors.join(" | ")}`);
 }
 
 export async function getAuthenticatedUser(accessToken: string) {
