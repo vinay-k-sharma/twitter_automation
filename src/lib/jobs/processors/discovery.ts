@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { logAction } from "@/lib/audit";
 import { recordUsageEvent } from "@/lib/limits";
+import { redis } from "@/lib/redis";
 import { containsExcludedWords, fingerprintText } from "@/lib/text";
 import { searchRecentTweets } from "@/lib/x/client";
 import { getValidXAccessToken } from "@/lib/x/connection";
@@ -24,6 +25,7 @@ export async function runDiscoveryForUser(userId: string) {
   const { accessToken } = await getValidXAccessToken(userId);
   let discovered = 0;
   let skipped = 0;
+  const seenKey = `seen:${userId}`;
 
   for (const topic of user.topics) {
     const tweets = await searchRecentTweets(accessToken, {
@@ -34,6 +36,12 @@ export async function runDiscoveryForUser(userId: string) {
     });
 
     for (const tweet of tweets) {
+      const alreadySeen = await redis.sismember(seenKey, tweet.id);
+      if (alreadySeen) {
+        skipped += 1;
+        continue;
+      }
+
       if (containsExcludedWords(tweet.text, topic.excludeWords)) {
         skipped += 1;
         continue;
@@ -64,6 +72,8 @@ export async function runDiscoveryForUser(userId: string) {
           duplicateFingerprint: fingerprintText(tweet.text)
         }
       });
+      await redis.sadd(seenKey, tweet.id);
+      await redis.expire(seenKey, 60 * 60 * 24 * 30);
       discovered += 1;
     }
 

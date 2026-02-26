@@ -10,6 +10,20 @@ function sign(input: string) {
   return createHmac("sha256", env.TOKEN_ENCRYPTION_KEY).update(input).digest("hex");
 }
 
+export function normalizeXClientId(value: string | null | undefined) {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+export function isLikelyXClientId(value: string | null | undefined) {
+  const normalized = normalizeXClientId(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.length >= 10 && !normalized.startsWith("@") && !/\s/.test(normalized);
+}
+
 export function createOAuthState(userId: string) {
   const nonce = toBase64Url(randomBytes(12));
   const raw = `${userId}.${nonce}.${Date.now()}`;
@@ -41,16 +55,24 @@ export function createPkcePair() {
   return { verifier, challenge };
 }
 
-export function buildXOAuthAuthorizeUrl(input: { state: string; codeChallenge: string }) {
-  if (!env.X_CLIENT_ID || !env.X_CALLBACK_URL) {
-    throw new Error("X OAuth env vars are missing");
+export function buildXOAuthAuthorizeUrl(input: {
+  state: string;
+  codeChallenge: string;
+  clientId: string;
+  callbackUrl: string;
+  scopes?: string;
+}) {
+  const clientId = normalizeXClientId(input.clientId);
+
+  if (!clientId || !input.callbackUrl) {
+    throw new Error("X OAuth app credentials are missing");
   }
 
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: env.X_CLIENT_ID,
-    redirect_uri: env.X_CALLBACK_URL,
-    scope: env.X_SCOPES,
+    client_id: clientId,
+    redirect_uri: input.callbackUrl,
+    scope: input.scopes ?? env.X_SCOPES,
     state: input.state,
     code_challenge: input.codeChallenge,
     code_challenge_method: "S256"

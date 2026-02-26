@@ -1,5 +1,9 @@
 import { Worker } from "bullmq";
+import cron from "node-cron";
 
+import { db } from "../lib/db";
+import { env } from "../lib/env";
+import { enqueueAutoPost, enqueueDiscovery, enqueueEngage } from "../lib/jobs/enqueue";
 import { queueConnection } from "../lib/jobs/queues";
 import { runAutoPostForUser } from "../lib/jobs/processors/autopost";
 import { runDiscoveryForUser } from "../lib/jobs/processors/discovery";
@@ -47,8 +51,67 @@ for (const worker of [discoveryWorker, engageWorker, autoPostWorker]) {
   });
 }
 
+async function enqueueForAll(type: "discovery" | "engage" | "autopost") {
+  const users = await db.user.findMany({
+    where: {
+      xConnection: { isNot: null }
+    },
+    select: { id: true }
+  });
+
+  if (type === "discovery") {
+    await Promise.all(users.map((user) => enqueueDiscovery(user.id)));
+  } else if (type === "engage") {
+    await Promise.all(users.map((user) => enqueueEngage(user.id)));
+  } else {
+    await Promise.all(users.map((user) => enqueueAutoPost(user.id)));
+  }
+
+  console.log(`[scheduler] ${type} jobs queued for ${users.length} users`);
+}
+
+const discoverySchedule = cron.schedule(
+  env.DISCOVERY_CRON,
+  async () => {
+    try {
+      await enqueueForAll("discovery");
+    } catch (error) {
+      console.error("[scheduler] discovery tick failed:", error);
+    }
+  },
+  { timezone: "UTC" }
+);
+
+const engagementSchedule = cron.schedule(
+  env.ENGAGEMENT_CRON,
+  async () => {
+    try {
+      await enqueueForAll("engage");
+    } catch (error) {
+      console.error("[scheduler] engagement tick failed:", error);
+    }
+  },
+  { timezone: "UTC" }
+);
+
+const autopostSchedule = cron.schedule(
+  env.AUTOPOST_CRON,
+  async () => {
+    try {
+      await enqueueForAll("autopost");
+    } catch (error) {
+      console.error("[scheduler] autopost tick failed:", error);
+    }
+  },
+  { timezone: "UTC" }
+);
+
 async function shutdown() {
+  discoverySchedule.stop();
+  engagementSchedule.stop();
+  autopostSchedule.stop();
   await Promise.all([discoveryWorker.close(), engageWorker.close(), autoPostWorker.close()]);
+  await db.$disconnect();
   await queueConnection.quit();
   process.exit(0);
 }
@@ -56,4 +119,4 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-console.log("Workers online: discovery, engage, autopost");
+console.log("Workers online: discovery, engage, autopost + scheduler");

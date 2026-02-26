@@ -14,7 +14,7 @@ const updateSchema = z.object({
 });
 
 type RouteContext = {
-  params: { id: string } | Promise<{ id: string }>;
+  params: Promise<{ id: string }>;
 };
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -23,7 +23,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return jsonError("Unauthorized", 401);
   }
 
-  const { id } = await Promise.resolve(context.params);
+  const { id } = await context.params;
   const existing = await db.topic.findUnique({
     where: { id }
   });
@@ -62,7 +62,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return jsonError("Unauthorized", 401);
   }
 
-  const { id } = await Promise.resolve(context.params);
+  const { id } = await context.params;
   const existing = await db.topic.findUnique({
     where: { id }
   });

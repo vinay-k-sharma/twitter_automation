@@ -54,6 +54,7 @@ model User {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   xConnection     XConnection?
+  xAppCredential  XAppCredential?
   topics          Topic[]
   replyConfig     ReplyConfig?
   autoTweetConfig AutoTweetConfig?
@@ -78,6 +79,16 @@ model XConnection {
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([xUserId])
+}
+
+model XAppCredential {
+  userId          String   @id
+  clientIdEnc     String
+  clientSecretEnc String?
+  callbackUrl     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Topic {

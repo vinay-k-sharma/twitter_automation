@@ -1,9 +1,13 @@
-import { UsageAction } from "@prisma/client";
+import { Prisma, UsageAction } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { getEffectiveLimits } from "@/lib/plans";
 
 const ACTIONS_WITH_HOURLY_CAP: UsageAction[] = ["REPLY", "LIKE", "TWEET", "FOLLOW"];
+const X_DAILY_HARD_LIMITS = {
+  likes: 1000,
+  follows: 400
+};
 
 function startOfUtcDay() {
   const now = new Date();
@@ -32,7 +36,7 @@ export async function getUserLimitSnapshot(userId: string) {
   const dayStart = startOfUtcDay();
   const oneHourAgo = hourAgo();
 
-  const [repliesToday, likesToday, tweetsToday, hourlyActions, topicsTracked] = await Promise.all([
+  const [repliesToday, likesToday, followsToday, tweetsToday, hourlyActions, topicsTracked] = await Promise.all([
     db.usageEvent.count({
       where: {
         userId,
@@ -44,6 +48,13 @@ export async function getUserLimitSnapshot(userId: string) {
       where: {
         userId,
         action: "LIKE",
+        createdAt: { gte: dayStart }
+      }
+    }),
+    db.usageEvent.count({
+      where: {
+        userId,
+        action: "FOLLOW",
         createdAt: { gte: dayStart }
       }
     }),
@@ -74,6 +85,7 @@ export async function getUserLimitSnapshot(userId: string) {
     usage: {
       repliesToday,
       likesToday,
+      followsToday,
       tweetsToday,
       hourlyActions,
       topicsTracked
@@ -91,14 +103,22 @@ export async function assertWithinHardCap(userId: string, action: UsageAction) {
   if (action === "REPLY" && snapshot.usage.repliesToday >= snapshot.limits.repliesPerDay) {
     throw new Error(`Daily replies cap reached (${snapshot.limits.repliesPerDay}/day)`);
   }
-  if (action === "LIKE" && snapshot.usage.likesToday >= snapshot.limits.likesPerDay) {
-    throw new Error(`Daily likes cap reached (${snapshot.limits.likesPerDay}/day)`);
+  if (action === "LIKE") {
+    const hardCap = Math.min(snapshot.limits.likesPerDay, X_DAILY_HARD_LIMITS.likes);
+    if (snapshot.usage.likesToday >= hardCap) {
+      throw new Error(`Daily likes cap reached (${hardCap}/day)`);
+    }
   }
   if (action === "TWEET" && snapshot.usage.tweetsToday >= snapshot.limits.tweetsPerDay) {
     throw new Error(`Daily tweets cap reached (${snapshot.limits.tweetsPerDay}/day)`);
   }
-  if (action === "FOLLOW" && !snapshot.limits.allowFollow) {
-    throw new Error("Follow action is not available on current plan combination");
+  if (action === "FOLLOW") {
+    if (!snapshot.limits.allowFollow) {
+      throw new Error("Follow action is not available on current plan combination");
+    }
+    if (snapshot.usage.followsToday >= X_DAILY_HARD_LIMITS.follows) {
+      throw new Error(`Daily follow cap reached (${X_DAILY_HARD_LIMITS.follows}/day)`);
+    }
   }
 }
 
@@ -109,12 +129,12 @@ export async function assertTopicSlots(userId: string, additionalTopics: number)
   }
 }
 
-export async function recordUsageEvent(userId: string, action: UsageAction, meta?: Record<string, unknown>) {
+export async function recordUsageEvent(userId: string, action: UsageAction, meta?: Prisma.InputJsonObject) {
   await db.usageEvent.create({
     data: {
       userId,
       action,
-      meta: meta ?? {}
+      meta
     }
   });
 }

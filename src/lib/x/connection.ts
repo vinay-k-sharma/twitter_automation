@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { env } from "@/lib/env";
 import { refreshAccessToken } from "@/lib/x/client";
+import { isLikelyXClientId, normalizeXClientId } from "@/lib/x/oauth";
 
 export async function getValidXAccessToken(userId: string) {
   const connection = await db.xConnection.findUnique({
@@ -24,8 +26,30 @@ export async function getValidXAccessToken(userId: string) {
     throw new Error("X access token expired and no refresh token is available");
   }
 
+  const appCredential = await db.xAppCredential.findUnique({
+    where: { userId }
+  });
+  const byoaClientId = appCredential ? normalizeXClientId(decryptSecret(appCredential.clientIdEnc)) : null;
+  const envClientId = normalizeXClientId(env.X_CLIENT_ID);
+  const useByoaClientId = isLikelyXClientId(byoaClientId);
+  const clientId = useByoaClientId ? byoaClientId : envClientId;
+  const clientSecret = useByoaClientId
+    ? appCredential?.clientSecretEnc
+      ? decryptSecret(appCredential.clientSecretEnc)
+      : env.X_CLIENT_SECRET
+    : env.X_CLIENT_SECRET;
+  const callbackUrl = env.X_CALLBACK_URL ?? (useByoaClientId ? appCredential?.callbackUrl ?? null : null);
+
+  if (!clientId || !callbackUrl) {
+    throw new Error("Missing X app credentials for token refresh");
+  }
+
   const refreshToken = decryptSecret(connection.refreshTokenEnc);
-  const refreshed = await refreshAccessToken(refreshToken);
+  const refreshed = await refreshAccessToken(refreshToken, {
+    clientId,
+    clientSecret,
+    callbackUrl
+  });
 
   const updated = await db.xConnection.update({
     where: { userId },

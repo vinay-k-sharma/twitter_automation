@@ -7,6 +7,12 @@ type XFetchOptions = RequestInit & {
   accessToken: string;
 };
 
+export type XOAuthAppCredentials = {
+  clientId: string;
+  clientSecret?: string | null;
+  callbackUrl: string;
+};
+
 async function readJsonSafe<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) {
@@ -32,25 +38,28 @@ async function xFetch(path: string, options: XFetchOptions) {
   return response;
 }
 
-export async function exchangeCodeForToken(input: { code: string; codeVerifier: string }) {
-  if (!env.X_CLIENT_ID || !env.X_CALLBACK_URL) {
-    throw new Error("X OAuth env vars are missing");
+export async function exchangeCodeForToken(
+  input: { code: string; codeVerifier: string },
+  oauth: XOAuthAppCredentials
+) {
+  if (!oauth.clientId || !oauth.callbackUrl) {
+    throw new Error("X OAuth app credentials are missing");
   }
 
   const params = new URLSearchParams({
     grant_type: "authorization_code",
     code: input.code,
-    redirect_uri: env.X_CALLBACK_URL,
+    redirect_uri: oauth.callbackUrl,
     code_verifier: input.codeVerifier,
-    client_id: env.X_CLIENT_ID
+    client_id: oauth.clientId
   });
 
   const headers: Record<string, string> = {
     "Content-Type": "application/x-www-form-urlencoded"
   };
 
-  if (env.X_CLIENT_SECRET) {
-    const raw = `${env.X_CLIENT_ID}:${env.X_CLIENT_SECRET}`;
+  if (oauth.clientSecret) {
+    const raw = `${oauth.clientId}:${oauth.clientSecret}`;
     headers.Authorization = `Basic ${Buffer.from(raw).toString("base64")}`;
   }
 
@@ -68,23 +77,23 @@ export async function exchangeCodeForToken(input: { code: string; codeVerifier: 
   return readJsonSafe<XTokenResponse>(response);
 }
 
-export async function refreshAccessToken(refreshToken: string) {
-  if (!env.X_CLIENT_ID) {
-    throw new Error("X OAuth env vars are missing");
+export async function refreshAccessToken(refreshToken: string, oauth: XOAuthAppCredentials) {
+  if (!oauth.clientId) {
+    throw new Error("X OAuth app credentials are missing");
   }
 
   const params = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
-    client_id: env.X_CLIENT_ID
+    client_id: oauth.clientId
   });
 
   const headers: Record<string, string> = {
     "Content-Type": "application/x-www-form-urlencoded"
   };
 
-  if (env.X_CLIENT_SECRET) {
-    const raw = `${env.X_CLIENT_ID}:${env.X_CLIENT_SECRET}`;
+  if (oauth.clientSecret) {
+    const raw = `${oauth.clientId}:${oauth.clientSecret}`;
     headers.Authorization = `Basic ${Buffer.from(raw).toString("base64")}`;
   }
 

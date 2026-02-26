@@ -15,6 +15,11 @@ type Props = {
     username: string | null;
     xPaidTier: "FREE" | "BASIC" | "PRO" | "ENTERPRISE";
   } | null;
+  xAppCredentials: {
+    configured: boolean;
+    callbackUrl: string;
+  };
+  xOAuthEnabled: boolean;
   topics: Array<{
     id: string;
     keyword: string;
@@ -67,6 +72,7 @@ type Props = {
       repliesToday: number;
       tweetsToday: number;
       likesToday: number;
+      followsToday: number;
       topicsTracked: number;
       hourlyActions: number;
     };
@@ -91,7 +97,9 @@ async function callApi(url: string, options?: RequestInit) {
 function formatOAuthError(code: string) {
   const knownErrors: Record<string, string> = {
     missing_x_oauth_env:
-      "Missing X OAuth env vars. Set X_CLIENT_ID, X_CLIENT_SECRET, and X_CALLBACK_URL in your env file.",
+      "Missing global X OAuth env vars. Configure X_CLIENT_ID and X_CALLBACK_URL or save BYOA credentials.",
+    missing_x_app_credentials:
+      "Missing X app credentials. Save your X Client ID/Secret + callback URL in the BYOA section first.",
     missing_oauth_params: "Missing OAuth callback parameters from X.",
     state_mismatch: "OAuth state mismatch. Please retry connecting your X account.",
     invalid_state: "OAuth state expired or invalid. Please retry connecting your X account.",
@@ -140,6 +148,11 @@ export function DashboardClient(props: Props) {
     language: props.autoTweetConfig.language,
     enabled: props.autoTweetConfig.enabled
   });
+  const [xAppForm, setXAppForm] = useState({
+    clientId: "",
+    clientSecret: "",
+    callbackUrl: props.xAppCredentials.callbackUrl
+  });
 
   const limits = props.limits?.limits;
   const usage = props.limits?.usage;
@@ -152,6 +165,7 @@ export function DashboardClient(props: Props) {
       `Replies: ${usage.repliesToday}/${limits.repliesPerDay}`,
       `Tweets: ${usage.tweetsToday}/${limits.tweetsPerDay}`,
       `Likes: ${usage.likesToday}/${limits.likesPerDay}`,
+      `Follows: ${usage.followsToday}/400`,
       `Topics tracked: ${usage.topicsTracked}/${limits.topicsTracked}`,
       `Hourly actions: ${usage.hourlyActions}/${limits.hourlyActionCap}`,
       `Follow enabled: ${limits.allowFollow ? "yes" : "no"}`
@@ -163,6 +177,7 @@ export function DashboardClient(props: Props) {
   const oauthError = oauthErrorCode ? formatOAuthError(oauthErrorCode) : null;
   const visibleNotice = notice ?? (oauthConnected ? "X account connected successfully." : null);
   const visibleError = error ?? oauthError;
+  const canConnectX = props.xOAuthEnabled;
 
   async function perform(key: string, callback: () => Promise<void>) {
     setBusyKey(key);
@@ -198,8 +213,11 @@ export function DashboardClient(props: Props) {
           {props.xConnection ? (
             <button
               className="button-secondary"
+              disabled={!canConnectX}
               onClick={() => {
-                window.location.href = "/api/x/connect";
+                if (canConnectX) {
+                  window.location.href = "/api/x/connect";
+                }
               }}
             >
               Reconnect X
@@ -207,8 +225,11 @@ export function DashboardClient(props: Props) {
           ) : (
             <button
               className="button"
+              disabled={!canConnectX}
               onClick={() => {
-                window.location.href = "/api/x/connect";
+                if (canConnectX) {
+                  window.location.href = "/api/x/connect";
+                }
               }}
             >
               Connect X Account
@@ -231,6 +252,82 @@ export function DashboardClient(props: Props) {
 
       {visibleNotice ? <p className="text-sm text-emerald-400">{visibleNotice}</p> : null}
       {visibleError ? <p className="text-sm text-rose-400">{visibleError}</p> : null}
+
+      <section className="card space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-base font-semibold">Bring your own X app (BYOA)</h2>
+          <span className="text-xs text-zinc-400">
+            {props.xAppCredentials.configured
+              ? "Configured"
+              : props.xOAuthEnabled
+                ? "Using global env"
+                : "Not configured"}
+          </span>
+        </div>
+        <p className="text-sm text-zinc-400">
+          Save your own X Client ID/Secret so this workspace uses your app rate limits and OAuth config.
+        </p>
+        <form
+          className="grid grid-cols-1 gap-3 md:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void perform("x_credentials", async () => {
+              await callApi("/api/x/credentials", {
+                method: "PUT",
+                body: JSON.stringify({
+                  clientId: xAppForm.clientId || undefined,
+                  clientSecret: xAppForm.clientSecret || undefined,
+                  callbackUrl: xAppForm.callbackUrl || undefined
+                })
+              });
+              setXAppForm((prev) => ({
+                ...prev,
+                clientSecret: ""
+              }));
+              setNotice("X app credentials saved.");
+            });
+          }}
+        >
+          <div>
+            <label className="label">X Client ID</label>
+            <input
+              className="input"
+              placeholder={props.xAppCredentials.configured ? "Saved (leave blank to keep)" : "Paste Client ID"}
+              value={xAppForm.clientId}
+              onChange={(event) => setXAppForm((prev) => ({ ...prev, clientId: event.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="label">X Client Secret</label>
+            <input
+              className="input"
+              type="password"
+              placeholder={props.xAppCredentials.configured ? "Saved (optional update)" : "Paste Client Secret"}
+              value={xAppForm.clientSecret}
+              onChange={(event) => setXAppForm((prev) => ({ ...prev, clientSecret: event.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="label">OAuth callback URL</label>
+            <input
+              className="input"
+              value={xAppForm.callbackUrl}
+              onChange={(event) => setXAppForm((prev) => ({ ...prev, callbackUrl: event.target.value }))}
+            />
+          </div>
+          <div className="md:col-span-3">
+            <button className="button" disabled={busyKey !== null}>
+              {busyKey === "x_credentials" ? "Saving..." : "Save X app credentials"}
+            </button>
+          </div>
+        </form>
+        {!canConnectX ? (
+          <p className="text-xs text-amber-400">
+            Connect X stays disabled until you either save BYOA credentials above or set global `X_CLIENT_ID` +
+            `X_CALLBACK_URL` in env.
+          </p>
+        ) : null}
+      </section>
 
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="card lg:col-span-1">

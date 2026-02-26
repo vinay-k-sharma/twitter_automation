@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { DashboardClient } from "@/components/dashboard-client";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { env } from "@/lib/env";
 import { getUserLimitSnapshot } from "@/lib/limits";
 
 export default async function DashboardPage() {
@@ -11,8 +12,11 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const [xConnection, topics, replyConfig, autoTweetConfig, candidates, logs] = await Promise.all([
+  const [xConnection, xAppCredential, topics, replyConfig, autoTweetConfig, candidates, logs] = await Promise.all([
     db.xConnection.findUnique({
+      where: { userId: user.id }
+    }),
+    db.xAppCredential.findUnique({
       where: { userId: user.id }
     }),
     db.topic.findMany({
@@ -56,6 +60,11 @@ export default async function DashboardPage() {
               }
             : null
         }
+        xAppCredentials={{
+          configured: Boolean(xAppCredential),
+          callbackUrl: xAppCredential?.callbackUrl ?? env.X_CALLBACK_URL ?? `${env.APP_URL}/api/x/callback`
+        }}
+        xOAuthEnabled={Boolean(xAppCredential || (env.X_CLIENT_ID && env.X_CALLBACK_URL))}
         replyConfig={
           replyConfig
             ? {

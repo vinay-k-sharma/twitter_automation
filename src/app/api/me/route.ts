@@ -9,8 +9,11 @@ export async function GET() {
     return jsonError("Unauthorized", 401);
   }
 
-  const [xConnection, replyConfig, autoTweetConfig, topics, recentLogs] = await Promise.all([
+  const [xConnection, xAppCredential, replyConfig, autoTweetConfig, topics, recentLogs] = await Promise.all([
     db.xConnection.findUnique({
+      where: { userId: user.id }
+    }),
+    db.xAppCredential.findUnique({
       where: { userId: user.id }
     }),
     db.replyConfig.findUnique({
@@ -41,6 +44,15 @@ export async function GET() {
           scope: xConnection.scope
         }
       : null,
+    xAppCredential: xAppCredential
+      ? {
+          configured: true,
+          callbackUrl: xAppCredential.callbackUrl
+        }
+      : {
+          configured: false,
+          callbackUrl: null
+        },
     replyConfig,
     autoTweetConfig,
     topics,

@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { db } from "@/lib/db";
 
 export async function logAction(input: {
@@ -5,7 +7,7 @@ export async function logAction(input: {
   action: string;
   status: "success" | "blocked" | "error" | "info";
   message?: string;
-  context?: Record<string, unknown>;
+  context?: Prisma.InputJsonObject;
 }) {
   await db.actionLog.create({
     data: {
@@ -13,7 +15,7 @@ export async function logAction(input: {
       action: input.action,
       status: input.status,
       message: input.message,
-      context: input.context ?? {}
+      context: input.context
     }
   });
 }

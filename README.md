@@ -39,6 +39,7 @@ docker compose up -d
 
 ```bash
 cp .env.example .env
+cp .env.example .env.local
 openssl rand -base64 32
 ```
 
@@ -63,12 +64,13 @@ npm run worker
 
 - http://localhost:3000
 - Login using the in-app demo login form
-- Connect X account from dashboard
+- In dashboard, save BYOA X app credentials, then connect X account
 
-## OAuth Configuration
+## OAuth Configuration (BYOA-first)
 
-- Set `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_CALLBACK_URL`
-- In your X app settings, add callback URL:
+- Preferred: each user stores their own Client ID/Secret from dashboard (`/api/x/credentials`)
+- Fallback: `X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_CALLBACK_URL` can still be set globally in env
+- In your X app settings, callback URL must match:
   - `http://localhost:3000/api/x/callback`
 - Ensure scopes include:
   - `tweet.read tweet.write users.read like.write follows.write offline.access`
@@ -89,6 +91,11 @@ Example scheduler call:
 curl -X POST "http://localhost:3000/api/scheduler/tick" \
   -H "x-scheduler-secret: change-me"
 ```
+
+Manual secure trigger endpoint is also available:
+
+- `POST /api/cron/trigger` with header `Authorization: Bearer <CRON_SECRET>`
+- Body: `{ "userId": "<id>", "type": "discovery" | "engage" | "autopost" }`
 
 ## Important Notes
 
