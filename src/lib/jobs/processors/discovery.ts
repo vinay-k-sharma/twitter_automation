@@ -3,7 +3,7 @@ import { logAction } from "@/lib/audit";
 import { recordUsageEvent } from "@/lib/limits";
 import { redis } from "@/lib/redis";
 import { containsExcludedWords, fingerprintText } from "@/lib/text";
-import { searchRecentTweets } from "@/lib/x/client";
+import { isNonRetryableXFailure, searchRecentTweets } from "@/lib/x/client";
 import { getValidXAccessToken } from "@/lib/x/connection";
 
 export async function runDiscoveryForUser(userId: string) {
@@ -19,21 +19,41 @@ export async function runDiscoveryForUser(userId: string) {
   });
 
   if (!user || !user.xConnection) {
-    return { discovered: 0, skipped: 0 };
+    return { discovered: 0, skipped: 0, blocked: 0 };
   }
 
   const { accessToken } = await getValidXAccessToken(userId);
   let discovered = 0;
   let skipped = 0;
+  let blocked = 0;
   const seenKey = `seen:${userId}`;
 
   for (const topic of user.topics) {
-    const tweets = await searchRecentTweets(accessToken, {
-      query: topic.keyword,
-      language: topic.language,
-      minLikes: topic.minLikes,
-      maxResults: 20
-    });
+    let tweets: Awaited<ReturnType<typeof searchRecentTweets>> = [];
+    try {
+      tweets = await searchRecentTweets(accessToken, {
+        query: topic.keyword,
+        language: topic.language,
+        minLikes: topic.minLikes,
+        maxResults: 20
+      });
+    } catch (searchError) {
+      if (!isNonRetryableXFailure(searchError)) {
+        throw searchError;
+      }
+      blocked += 1;
+      await logAction({
+        userId,
+        action: "discovery_blocked",
+        status: "blocked",
+        message: searchError instanceof Error ? searchError.message : "Discovery request blocked by X",
+        context: {
+          topicId: topic.id,
+          keyword: topic.keyword
+        }
+      });
+      break;
+    }
 
     for (const tweet of tweets) {
       const alreadySeen = await redis.sismember(seenKey, tweet.id);
@@ -86,10 +106,10 @@ export async function runDiscoveryForUser(userId: string) {
   await logAction({
     userId,
     action: "discovery",
-    status: "success",
-    message: `Discovery completed. New candidates: ${discovered}, skipped: ${skipped}`,
-    context: { discovered, skipped }
+    status: blocked > 0 ? "blocked" : "success",
+    message: `Discovery completed. New candidates: ${discovered}, skipped: ${skipped}, blocked: ${blocked}`,
+    context: { discovered, skipped, blocked }
   });
 
-  return { discovered, skipped };
+  return { discovered, skipped, blocked };
 }

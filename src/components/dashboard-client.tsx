@@ -120,6 +120,23 @@ function formatOAuthError(code: string) {
   return code.replace(/_/g, " ");
 }
 
+function formatAutoPostResult(payload: any) {
+  const result = payload?.result;
+  if (!result) {
+    return "Auto-post triggered.";
+  }
+
+  if (result.posted > 0) {
+    return `Auto-post published ${result.posted} tweet${result.posted > 1 ? "s" : ""}.`;
+  }
+
+  if (result.reason) {
+    return `Auto-post skipped: ${String(result.reason).replace(/_/g, " ")}.`;
+  }
+
+  return "Auto-post run completed with no published tweet.";
+}
+
 export function DashboardClient(props: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -380,8 +397,8 @@ export function DashboardClient(props: Props) {
               disabled={busyKey !== null}
               onClick={() =>
                 perform("autopost", async () => {
-                  await callApi("/api/x/autopost", { method: "POST" });
-                  setNotice("Auto-post job queued.");
+                  const payload = await callApi("/api/x/autopost", { method: "POST" });
+                  setNotice(formatAutoPostResult(payload));
                 })
               }
             >
@@ -389,7 +406,8 @@ export function DashboardClient(props: Props) {
             </button>
           </div>
           <p className="mt-3 text-xs text-zinc-400">
-            Jobs execute in workers with random jitter, moderation, duplicate checks, and hard caps.
+            Discovery/engage/autopost all queue to workers. Use <code>?mode=inline&amp;force=1</code> only for local
+            autopost smoke tests.
           </p>
         </div>
       </section>
@@ -614,7 +632,7 @@ export function DashboardClient(props: Props) {
                 <input
                   className="input"
                   type="number"
-                  min={30}
+                  min={15}
                   max={1440}
                   value={autoForm.frequencyMinutes}
                   onChange={(event) => setAutoForm((prev) => ({ ...prev, frequencyMinutes: event.target.value }))}

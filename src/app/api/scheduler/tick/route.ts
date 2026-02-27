@@ -15,14 +15,27 @@ export async function POST(request: Request) {
     },
     select: { id: true }
   });
+  const autoPostUsers = await db.user.findMany({
+    where: {
+      xConnection: { isNot: null },
+      autoTweetConfig: {
+        is: { enabled: true }
+      }
+    },
+    select: { id: true }
+  });
 
   await Promise.all(
-    users.flatMap((user) => [enqueueDiscovery(user.id), enqueueEngage(user.id), enqueueAutoPost(user.id)])
+    users.flatMap((user) => [enqueueDiscovery(user.id), enqueueEngage(user.id)])
+  );
+  await Promise.all(
+    autoPostUsers.map((user) => enqueueAutoPost(user.id))
   );
 
   return jsonOk({
     ok: true,
     users: users.length,
-    jobsQueued: users.length * 3
+    autoPostUsers: autoPostUsers.length,
+    jobsQueued: users.length * 2 + autoPostUsers.length
   });
 }

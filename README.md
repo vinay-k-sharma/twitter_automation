@@ -84,6 +84,8 @@ This app provides `POST /api/scheduler/tick` (protected by `SCHEDULER_SECRET`) t
 - auto-tweet jobs
 
 For production, trigger this endpoint from a cron service (e.g. Vercel Cron, GitHub Actions, or your cloud scheduler).
+`AUTOPOST_CRON` should run frequently (recommended every 5 minutes) so per-user `frequencyMinutes`
+and posting windows are evaluated accurately by the worker.
 
 Example scheduler call:
 
@@ -96,6 +98,24 @@ Manual secure trigger endpoint is also available:
 
 - `POST /api/cron/trigger` with header `Authorization: Bearer <CRON_SECRET>`
 - Body: `{ "userId": "<id>", "type": "discovery" | "engage" | "autopost" }`
+
+## Auto Tweet Posting
+
+Per user configuration is stored in `AutoTweetConfig` and supports:
+
+- topics (deduplicated + normalized)
+- frequency in minutes (`15-1440`)
+- posting window (`HH:mm`, start=end means 24h window)
+- thread mode on/off
+
+Execution behavior:
+
+- If not due yet or outside posting window, run is skipped safely.
+- If enabled and due, the system generates one post (or a 3-part thread), moderates each part,
+  checks duplicate fingerprints, enforces hard caps, then posts to X.
+- Thread mode posts sequential replies (part 2 replies to part 1, etc.) to keep a coherent thread.
+- `POST /api/x/autopost` follows the normal queue path (same as production behavior).
+- For local smoke tests only, `POST /api/x/autopost?mode=inline&force=1` executes inline immediately.
 
 ## Important Notes
 

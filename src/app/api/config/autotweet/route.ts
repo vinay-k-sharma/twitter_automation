@@ -6,14 +6,24 @@ import { jsonError, jsonOk } from "@/lib/http";
 import { getUserLimitSnapshot } from "@/lib/limits";
 
 const schema = z.object({
-  topics: z.array(z.string().min(2).max(80)).min(1).max(50),
-  frequencyMinutes: z.number().int().min(30).max(1440),
+  topics: z.array(z.string().min(1).max(80)).min(1).max(50),
+  frequencyMinutes: z.number().int().min(15).max(1440),
   windowStart: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
   windowEnd: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
   threadMode: z.boolean(),
   language: z.string().min(2).max(8),
   enabled: z.boolean()
 });
+
+function normalizeTopics(topics: string[]) {
+  return Array.from(
+    new Set(
+      topics
+        .map((topic) => topic.trim().toLowerCase())
+        .filter((topic) => topic.length >= 2)
+    )
+  );
+}
 
 export async function PUT(request: Request) {
   const user = await getCurrentUser();
@@ -23,15 +33,20 @@ export async function PUT(request: Request) {
 
   try {
     const payload = schema.parse(await request.json());
+    const normalizedTopics = normalizeTopics(payload.topics);
+    if (normalizedTopics.length === 0) {
+      return jsonError("At least one valid topic is required", 422);
+    }
+
     const snapshot = await getUserLimitSnapshot(user.id);
-    if (payload.topics.length > snapshot.limits.topicsTracked) {
+    if (normalizedTopics.length > snapshot.limits.topicsTracked) {
       return jsonError(`Auto-tweet topics exceed cap (${snapshot.limits.topicsTracked})`, 403);
     }
 
     const config = await db.autoTweetConfig.upsert({
       where: { userId: user.id },
       update: {
-        topics: payload.topics.map((t) => t.trim().toLowerCase()),
+        topics: normalizedTopics,
         frequencyMinutes: payload.frequencyMinutes,
         windowStart: payload.windowStart,
         windowEnd: payload.windowEnd,
@@ -41,7 +56,7 @@ export async function PUT(request: Request) {
       },
       create: {
         userId: user.id,
-        topics: payload.topics.map((t) => t.trim().toLowerCase()),
+        topics: normalizedTopics,
         frequencyMinutes: payload.frequencyMinutes,
         windowStart: payload.windowStart,
         windowEnd: payload.windowEnd,

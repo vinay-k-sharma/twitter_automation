@@ -23,9 +23,10 @@ const envSchema = z.object({
   X_OAUTH_TOKEN_URL: z.string().url().default("https://api.x.com/2/oauth2/token"),
   X_API_BASE_URL: z.string().url().default("https://api.x.com/2"),
   X_SCOPES: z.string().default("tweet.read tweet.write users.read like.write follows.write offline.access"),
+  X_ALLOW_INSECURE_TLS: z.string().optional(),
   DISCOVERY_CRON: z.string().default("*/30 * * * *"),
   ENGAGEMENT_CRON: z.string().default("*/5 * * * *"),
-  AUTOPOST_CRON: z.string().default("0 9,12,15,18 * * *")
+  AUTOPOST_CRON: z.string().default("*/5 * * * *")
 });
 
 export const env = envSchema.parse({
@@ -44,6 +45,7 @@ export const env = envSchema.parse({
   X_OAUTH_TOKEN_URL: process.env.X_OAUTH_TOKEN_URL,
   X_API_BASE_URL: process.env.X_API_BASE_URL,
   X_SCOPES: process.env.X_SCOPES,
+  X_ALLOW_INSECURE_TLS: process.env.X_ALLOW_INSECURE_TLS,
   DISCOVERY_CRON: process.env.DISCOVERY_CRON,
   ENGAGEMENT_CRON: process.env.ENGAGEMENT_CRON,
   AUTOPOST_CRON: process.env.AUTOPOST_CRON

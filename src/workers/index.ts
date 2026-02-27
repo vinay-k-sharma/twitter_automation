@@ -53,9 +53,17 @@ for (const worker of [discoveryWorker, engageWorker, autoPostWorker]) {
 
 async function enqueueForAll(type: "discovery" | "engage" | "autopost") {
   const users = await db.user.findMany({
-    where: {
-      xConnection: { isNot: null }
-    },
+    where:
+      type === "autopost"
+        ? {
+            xConnection: { isNot: null },
+            autoTweetConfig: {
+              is: { enabled: true }
+            }
+          }
+        : {
+            xConnection: { isNot: null }
+          },
     select: { id: true }
   });
 

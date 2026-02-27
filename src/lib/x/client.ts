@@ -25,6 +25,109 @@ type TokenAttemptResult = {
   body: string;
 };
 
+let insecureTlsNoticeShown = false;
+
+function allowsInsecureTlsForLocal() {
+  return process.env.NODE_ENV !== "production" && env.X_ALLOW_INSECURE_TLS === "true";
+}
+
+function isTlsCertificateError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") {
+    return false;
+  }
+  const code = (cause as { code?: unknown }).code;
+  return code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE";
+}
+
+function isNetworkBlockPage(payload: string) {
+  const normalized = payload.toLowerCase();
+  return (
+    normalized.includes("this website is blocked") ||
+    (normalized.includes("protected by") && normalized.includes("sophos")) ||
+    normalized.includes("restricted access to sites categorized as social networking")
+  );
+}
+
+function summarizeErrorPayload(payload: string, maxLength = 400) {
+  const compact = payload.replace(/\s+/g, " ").trim();
+  return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
+}
+
+export class XApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(status: number, body: string) {
+    super(`X API error ${status}: ${summarizeErrorPayload(body)}`);
+    this.name = "XApiError";
+    this.status = status;
+    this.body = body;
+    Object.setPrototypeOf(this, XApiError.prototype);
+  }
+}
+
+export function isXApiError(error: unknown, statuses?: number | number[]) {
+  if (!(error instanceof XApiError)) {
+    return false;
+  }
+  if (statuses === undefined) {
+    return true;
+  }
+  const allowed = Array.isArray(statuses) ? statuses : [statuses];
+  return allowed.includes(error.status);
+}
+
+export function isNonRetryableXFailure(error: unknown) {
+  if (isXApiError(error, [400, 401, 402, 403])) {
+    return true;
+  }
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("x token refresh failed") ||
+    message.includes("x oauth token exchange failed") ||
+    message.includes("missing x app credentials") ||
+    message.includes("unauthorized_client") ||
+    message.includes("invalid_client") ||
+    message.includes("creditsdepleted")
+  );
+}
+
+async function fetchWithLocalTlsFallback(url: string, options: RequestInit) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (!isTlsCertificateError(error) || !allowsInsecureTlsForLocal()) {
+      throw error;
+    }
+
+    if (!insecureTlsNoticeShown) {
+      console.warn(
+        "[x/client] TLS certificate chain failed; retrying with insecure TLS for local development."
+      );
+      insecureTlsNoticeShown = true;
+    }
+
+    const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    try {
+      return await fetch(url, options);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      } else {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+      }
+    }
+  }
+}
+
 async function readJsonSafe<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) {
@@ -34,7 +137,7 @@ async function readJsonSafe<T>(response: Response): Promise<T> {
 }
 
 async function xFetch(path: string, options: XFetchOptions) {
-  const response = await fetch(`${env.X_API_BASE_URL}${path}`, {
+  const response = await fetchWithLocalTlsFallback(`${env.X_API_BASE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -45,7 +148,12 @@ async function xFetch(path: string, options: XFetchOptions) {
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`X API error ${response.status}: ${details}`);
+    if (isNetworkBlockPage(details)) {
+      throw new Error(
+        "Network firewall blocked access to api.x.com (Sophos policy). Login to your network portal or ask IT to allowlist x.com/api.x.com."
+      );
+    }
+    throw new XApiError(response.status, details);
   }
   return response;
 }
@@ -113,12 +221,16 @@ async function requestOAuthToken(
     }
   }
 
-  const response = await fetch(env.X_OAUTH_TOKEN_URL, {
+  const response = await fetchWithLocalTlsFallback(env.X_OAUTH_TOKEN_URL, {
     method: "POST",
     headers,
     body: params.toString()
   });
-  const body = await response.text();
+  const rawBody = await response.text();
+  const body =
+    !response.ok && isNetworkBlockPage(rawBody)
+      ? '{"error":"network_blocked","error_description":"Network firewall blocked access to api.x.com (Sophos policy)."}'
+      : rawBody;
 
   return {
     ok: response.ok,
